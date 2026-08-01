@@ -27,11 +27,12 @@ from modules.technical import *
 from modules.styles import *
 from modules.etf import *
 from modules.etf import eh_etf, buscar_dados_etf, mapear_etf_us
+from modules.ativos import CLASSES, classificar_ativo, eh_bdr, eh_ativo_nativo_b3
 from modules.flow import renderizar_painel_flow
 from modules.backtest import backtestar_scanner, renderizar_backtest_scanner, backtestar_triple_screen, renderizar_backtest_triple_screen
 
 st.set_page_config(
-    page_title="Monitor BDRs - Swing Trade",
+    page_title="Monitor B3 - Swing Trade",
     page_icon="📉",
     layout="wide"
 )
@@ -153,7 +154,7 @@ dia_semana_pt = dias_pt.get(dia_semana, dia_semana)
 
 st.markdown(f"""
 <div class="main-header">
-    <h1 class="main-title">📊 Monitor BDR - Swing Trade Pro</h1>
+    <h1 class="main-title">📊 Monitor B3 - Swing Trade Pro</h1>
     <p class="main-subtitle">Análise Técnica Avançada | Rastreamento de Oportunidades em Tempo Real</p>
     <p style="color: rgba(255, 255, 255, 0.8); font-size: 0.9rem; text-align: center; margin-top: 0.5rem;">
         🕐 {dia_semana_pt}, {data_hora_analise} (Horário de Brasília)
@@ -167,7 +168,7 @@ with col_info1:
     st.markdown("**📈 Estratégia:** Reversão em Sobrevenda")
 
 with col_info2:
-    st.markdown("**🎯 Foco:** BDRs em Queda com Potencial")
+    st.markdown("**🎯 Foco:** Ativos da B3 em Queda com Potencial")
 
 with col_info3:
     st.markdown("**⏱️ Timeframe:** 6 Meses | Diário")
@@ -238,21 +239,38 @@ with st.expander("📚 Guia dos Indicadores - Entenda os Sinais", expanded=False
 
 st.markdown("---")
 
+# --- SELEÇÃO DO UNIVERSO DE ATIVOS ---
+# Define quais classes da B3 entram na varredura. Por padrão, todas.
+st.markdown("**🌐 Universo de ativos (B3):**")
+classes_selecionadas = st.multiselect(
+    "Selecione as classes de ativos para varrer",
+    options=list(CLASSES),
+    default=list(CLASSES),
+    help="Ações (ON/PN/Units), BDRs, FIIs e ETFs nacionais. Marque todas para "
+         "varrer o mercado à vista inteiro; ou restrinja a uma classe específica.",
+    label_visibility="collapsed",
+)
+
 if st.button("🔄 Atualizar Análise", type="primary"):
+    buscar_oportunidades_mercado.clear()
     buscar_oportunidades_tv.clear()
-    lista_bdrs = list(NOMES_BDRS.keys())
+    classes_scan = classes_selecionadas or list(CLASSES)
     oportunidades = None
 
     # Caminho rápido: scanner em massa via TradingView (1 requisição, sem o
-    # bloqueio de IP do Yahoo). O histórico do ticker selecionado é buscado
+    # bloqueio de IP do Yahoo). Varre TODO o mercado à vista da B3 filtrando
+    # pelas classes escolhidas. O histórico do ticker selecionado é buscado
     # sob demanda no gráfico (obter_historico_ticker).
-    with st.spinner("Buscando dados ao vivo (TradingView)..."):
-        oportunidades = buscar_oportunidades_tv(lista_bdrs, NOMES_BDRS)
+    with st.spinner("Buscando dados ao vivo do mercado B3 (TradingView)..."):
+        oportunidades = buscar_oportunidades_mercado(classes_scan, NOMES_BDRS)
 
     # Fallback: se o TradingView falhar, usa o caminho antigo via yfinance.
+    # O yfinance não varre o mercado inteiro, então recai sobre a lista curada
+    # de BDRs (universo original) — melhor entregar algo do que nada.
     if not oportunidades:
         buscar_dados.clear()
-        with st.spinner("TradingView indisponível — baixando via Yahoo Finance..."):
+        lista_bdrs = list(NOMES_BDRS.keys())
+        with st.spinner("TradingView indisponível — baixando BDRs via Yahoo Finance..."):
             df = buscar_dados(lista_bdrs)
             if df.empty:
                 st.error("Erro ao carregar dados. Se o Yahoo tiver bloqueado, aguarde alguns minutos.")
@@ -286,7 +304,7 @@ if 'oportunidades' in st.session_state:
     <div style='background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
                 padding: 1rem; border-radius: 8px; margin-bottom: 1rem;'>
         <p style='margin: 0; color: #334155; font-weight: 500;'>
-            💡 <strong>Dica:</strong> Selecione as médias móveis para filtrar BDRs em correção dentro de tendências de alta
+            💡 <strong>Dica:</strong> Selecione as médias móveis para filtrar ativos em correção dentro de tendências de alta
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -295,14 +313,27 @@ if 'oportunidades' in st.session_state:
         st.markdown("""
 Os filtros ajudam a focar em **correções dentro de tendências de alta** (o objetivo do app), removendo quedas em tendência de baixa.
 
-- **Acima da EMA20 / EMA50 / EMA200:** mostra só BDRs cujo preço está **acima** da média escolhida. A EMA200 filtra a tendência de **longo prazo** (a mais importante); EMA20/50, curto/médio prazo. Pode combinar mais de uma.
-- **Apenas ETFs (terminação 39):** mostra só BDRs de ETFs que caíram.
-- **Liquidez mínima:** oculta BDRs abaixo do ranking de liquidez escolhido (0 = sem filtro; 10 = só as mais líquidas). Útil para evitar papéis com pouco volume e gaps.
+- **Classe do ativo:** restringe a tabela a Ações, BDRs, FIIs e/ou ETFs. Vazio = todas as classes que foram varridas.
+- **Acima da EMA20 / EMA50 / EMA200:** mostra só ativos cujo preço está **acima** da média escolhida. A EMA200 filtra a tendência de **longo prazo** (a mais importante); EMA20/50, curto/médio prazo. Pode combinar mais de uma.
+- **Liquidez mínima:** oculta ativos abaixo do ranking de liquidez escolhido (0 = sem filtro; 10 = só os mais líquidos). Útil para evitar papéis com pouco volume e gaps.
 
-> Sem nenhum filtro marcado, a tabela mostra **todas** as BDRs em queda no dia.
+> Sem nenhum filtro marcado, a tabela mostra **todos** os ativos em queda no dia.
         """)
 
-    col_filtro1, col_filtro2, col_filtro3, col_filtro4 = st.columns(4)
+    # Filtro por classe de ativo (aplicado sobre o resultado já varrido).
+    classes_disponiveis = sorted(
+        {opp.get('Classe') for opp in oportunidades if opp.get('Classe')},
+        key=lambda c: list(CLASSES).index(c) if c in CLASSES else 99,
+    )
+    filtro_classes = st.multiselect(
+        "🏷️ Classe do ativo",
+        options=classes_disponiveis,
+        default=[],
+        help="Restringe a tabela às classes escolhidas (Ação/BDR/FII/ETF). "
+             "Vazio = mostra todas as classes varridas.",
+    )
+
+    col_filtro1, col_filtro2, col_filtro3 = st.columns(3)
 
     with col_filtro1:
         filtrar_ema20 = st.checkbox(
@@ -325,46 +356,39 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
             help="Preço acima da EMA200 (longo prazo)"
         )
 
-    with col_filtro4:
-        filtrar_etf = st.checkbox(
-            "🧺 Apenas ETFs (BDR terminação 39)",
-            value=False,
-            help="Mostra somente BDRs de ETFs (que tiveram queda no dia)"
-        )
-
     # Slider de liquidez
     st.markdown("**💧 Liquidez mínima:**")
     ranking_min_liq = st.slider(
         "0 = sem filtro  |  10 = máxima exigência",
         min_value=0, max_value=10, value=0, step=1,
-        help="Filtra BDRs pelo ranking de liquidez 0-10. Quanto maior, menor o risco de gaps e volume baixo."
+        help="Filtra ativos pelo ranking de liquidez 0-10. Quanto maior, menor o risco de gaps e volume baixo."
     )
 
     # Botão global dos backtests (opt-in) — desligado por padrão para não pesar.
     # Quando ligado, a BDR selecionada exibe os backtests de validação histórica
     # (sinal do scanner, Triple Screen e modelo de ML walk-forward).
     rodar_bt = st.toggle(
-        "🔬 Rodar backtests de validação histórica na BDR selecionada",
+        "🔬 Rodar backtests de validação histórica no ativo selecionado",
         value=False,
         key="rodar_bt_global",
         help="Desligado por padrão para não pesar o carregamento. Ligue para "
              "validar no histórico o sinal do scanner, o Triple Screen e o "
-             "modelo de ML — recalcula ao abrir cada BDR (pode levar segundos).",
+             "modelo de ML — recalcula ao abrir cada ativo (pode levar segundos).",
     )
 
     # Aplicar filtros se algum selecionado
-    if filtrar_ema20 or filtrar_ema50 or filtrar_ema200 or filtrar_etf or ranking_min_liq > 0:
+    if filtrar_ema20 or filtrar_ema50 or filtrar_ema200 or filtro_classes or ranking_min_liq > 0:
         df_res_filtrado = []
-        contadores = {'ema20': 0, 'ema50': 0, 'ema200': 0, 'etf': 0, 'sem_dados': 0}
+        contadores = {'ema20': 0, 'ema50': 0, 'ema200': 0, 'classe': 0, 'sem_dados': 0}
 
         for opp in oportunidades:
             ticker = opp['Ticker']
             try:
-                # Filtro de ETF — aplicado primeiro, sem precisar de histórico
-                if filtrar_etf:
-                    if not eh_etf(ticker):
+                # Filtro por classe — aplicado primeiro, sem precisar de histórico
+                if filtro_classes:
+                    if opp.get('Classe') not in filtro_classes:
                         continue
-                    contadores['etf'] += 1
+                    contadores['classe'] += 1
 
                 ultimo_close = opp.get('Preco')
                 if ultimo_close is None or pd.isna(ultimo_close):
@@ -424,14 +448,14 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
                 filtros_ativos.append(f"EMA50 ({contadores['ema50']} ✓)")
             if filtrar_ema200:
                 filtros_ativos.append(f"EMA200 ({contadores['ema200']} ✓)")
-            if filtrar_etf:
-                filtros_ativos.append(f"ETFs ({contadores['etf']} ✓)")
+            if filtro_classes:
+                filtros_ativos.append(f"Classe {'/'.join(filtro_classes)} ({contadores['classe']} ✓)")
 
             st.markdown(f"""
             <div style='background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
                         padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
                 <p style='margin: 0; color: #166534; font-weight: 600; font-size: 1.1rem;'>
-                    ✅ {len(df_res)} BDRs encontradas | Filtros ativos: {' + '.join(filtros_ativos) if filtros_ativos else 'Liquidez'}
+                    ✅ {len(df_res)} ativos encontrados | Filtros ativos: {' + '.join(filtros_ativos) if filtros_ativos else 'Liquidez'}
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -444,14 +468,14 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
                 filtros_ativos.append(f"EMA50 ({contadores['ema50']} acima)")
             if filtrar_ema200:
                 filtros_ativos.append(f"EMA200 ({contadores['ema200']} acima)")
-            if filtrar_etf:
-                filtros_ativos.append(f"ETFs ({contadores['etf']} encontradas)")
+            if filtro_classes:
+                filtros_ativos.append(f"Classe {'/'.join(filtro_classes)} ({contadores['classe']} encontrados)")
 
             st.markdown(f"""
             <div style='background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
                         padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
                 <p style='margin: 0; color: #7c3626; font-weight: 600;'>
-                    ⚠️ Nenhuma BDR passou em TODOS os filtros combinados
+                    ⚠️ Nenhum ativo passou em TODOS os filtros combinados
                 </p>
                 <p style='margin: 0.5rem 0 0 0; color: #7c3626; font-size: 0.9rem;'>
                     📊 {' | '.join(filtros_ativos)} | {contadores['sem_dados']} sem dados suficientes
@@ -474,10 +498,11 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
 
         with st.expander("ℹ️ O que é esta seção e como ler cada coluna"):
             st.markdown("""
-Lista as BDRs que **caíram no dia** e podem ser oportunidades de compra (correção). Dados ao vivo do TradingView, ordenados da maior para a menor queda.
+Lista os ativos da B3 que **caíram no dia** e podem ser oportunidades de compra (correção). Dados ao vivo do TradingView, ordenados da maior para a menor queda.
 
-- **Empresa / Liq. (💧):** nome do BDR e **ranking de liquidez 0–10** (pelo volume financeiro médio/dia). Quanto maior, menor o risco de spread/gap e mais fácil entrar e sair.
-- **Preço:** cotação atual da BDR na B3 (R\$).
+- **Classe:** tipo do ativo — Ação, BDR, FII ou ETF.
+- **Empresa / Liq. (💧):** nome do ativo e **ranking de liquidez 0–10** (pelo volume financeiro médio/dia). Quanto maior, menor o risco de spread/gap e mais fácil entrar e sair.
+- **Preço:** cotação atual do ativo na B3 (R\$).
 - **Queda_Dia:** variação % no dia (a tabela só mostra quedas).
 - **I.S. (Índice de Sobrevenda):** `((100−RSI)+(100−Estocástico))/2`. Quanto **maior**, mais sobrevendido (0–100).
 - **Vol. R\$:** volume financeiro médio negociado por dia (R\$).
@@ -503,8 +528,10 @@ Lista as BDRs que **caíram no dia** e podem ser oportunidades de compra (corre�
                 'Stoch': '{:.0f}',
                 'Liquidez': '{:.0f}'
             }),
-            column_order=("Ticker", "Empresa", "Liquidez", "Preco", "Queda_Dia", "IS", "Volume", "Gap", "Potencial", "Score", "Sinais"),
+            column_order=("Ticker", "Classe", "Empresa", "Liquidez", "Preco", "Queda_Dia", "IS", "Volume", "Gap", "Potencial", "Score", "Sinais"),
             column_config={
+                "Classe": st.column_config.TextColumn("Classe", width="small",
+                    help="Tipo do ativo: Ação, BDR, FII ou ETF"),
                 "Empresa": st.column_config.TextColumn("Empresa", width="medium"),
                 "Liquidez": st.column_config.NumberColumn("💧 Liq.", width="small",
                     help="Ranking de Liquidez 0-10 (🔴 baixa → 🟢 alta)"),
@@ -551,9 +578,12 @@ O gráfico tem **4 painéis** (histórico via Yahoo; escolha o *timeframe* diár
                 # Dispara também quando o histórico da BDR é CURTO demais (Yahoo traz
                 # só uns dias), usando o US se ele tiver mais barras — evita gráfico
                 # "achatado" de poucos dias como no A1PP34.
+                # O fallback para o ativo subjacente nos EUA só faz sentido para
+                # BDRs; ativos nativos da B3 (ações/FIIs/ETFs) têm histórico
+                # próprio via .SA e não têm equivalente americano.
                 fonte_grafico_us = None
                 _MIN_BARRAS_GRAF = 40
-                if df_ticker.empty or len(df_ticker) < _MIN_BARRAS_GRAF:
+                if eh_bdr(ticker) and (df_ticker.empty or len(df_ticker) < _MIN_BARRAS_GRAF):
                     # Para BDR de ETF, o ticker US vem do mapa curado (mapear_etf_us);
                     # para ações, do mapa padrão. O strip de dígitos não acha o fundo
                     # americano (ex.: BEWY39 -> 'BEWY' inexistente; correto é 'EWY').
@@ -806,7 +836,8 @@ O gráfico tem **4 painéis** (histórico via Yahoo; escolha o *timeframe* diár
                 try:
                     _hist_bt = obter_historico_ticker(ticker)
                     _hist_bt = _hist_bt.dropna(subset=['Close']) if _hist_bt is not None else pd.DataFrame()
-                    if _hist_bt.empty or len(_hist_bt) < 80:
+                    # Fallback para o ativo US subjacente só vale para BDRs.
+                    if eh_bdr(ticker) and (_hist_bt.empty or len(_hist_bt) < 80):
                         _tk_us_bt = mapear_etf_us(ticker) if eh_etf(ticker) else mapear_ticker_us(ticker)
                         if _tk_us_bt and _tk_us_bt != ticker:
                             _df_us_bt = obter_historico_us_escalado(_tk_us_bt, row['Preco'])
@@ -836,7 +867,7 @@ O gráfico tem **4 painéis** (histórico via Yahoo; escolha o *timeframe* diár
 
             with st.expander("ℹ️ O que é o score fundamentalista"):
                 st.markdown("""
-Avalia a **saúde da empresa-mãe** (não o preço da BDR), com um score **0–100%** a partir de uma base neutra de 50, somando bônus e penalidades:
+Avalia a **saúde da empresa** (para BDRs, a empresa-mãe no exterior; para ações/FIIs/ETFs, a própria emissora na B3) — não o preço do papel —, com um score **0–100%** a partir de uma base neutra de 50, somando bônus e penalidades:
 
 - **P/E Ratio (Preço/Lucro):** múltiplo de valuation. Baixo/moderado soma pontos; muito alto (>50) penaliza.
 - **Dividend Yield:** dividendo anual ÷ preço. Yields maiores somam pontos.
@@ -892,9 +923,11 @@ Faixas: **≥80% Excelente · 65–79 Bom · 50–64 Neutro · 35–49 Atenção
 
                 # Fonte dos dados
                 if 'BRAPI' in fonte:
-                    st.info(f"📡 **Fonte:** {fonte} | Ticker: **{ticker_fonte}**\n\n⚠️ *Dados limitados disponíveis para esta BDR. Score baseado em Market Cap e Volume na B3.*")
-                else:
+                    st.info(f"📡 **Fonte:** {fonte} | Ticker: **{ticker_fonte}**\n\n⚠️ *Dados limitados disponíveis para este ativo. Score baseado em Market Cap e Volume na B3.*")
+                elif eh_bdr(ticker):
                     st.success(f"📡 **Fonte:** {fonte} | Ticker US: **{ticker_fonte}**")
+                else:
+                    st.success(f"📡 **Fonte:** {fonte} | Ticker: **{ticker_fonte}**")
 
                 # Moeda dos valores: BRAPI é dado da B3 (em reais); Yahoo/FMP em dólar.
                 moeda_fund = 'R$' if 'BRAPI' in fonte else '$'
@@ -1069,8 +1102,9 @@ Faixas: **≥80% Excelente · 65–79 Bom · 50–64 Neutro · 35–49 Atenção
 
             else:
                 st.warning(f"⚠️ Não foi possível obter dados fundamentalistas para {ticker}")
-                ticker_us = mapear_ticker_us(ticker)
-                st.info(f"""
+                if eh_bdr(ticker):
+                    ticker_us = mapear_ticker_us(ticker)
+                    st.info(f"""
                 💡 **Por que isso acontece?**
 
                 - Ticker BDR: `{ticker}`
@@ -1087,6 +1121,23 @@ Faixas: **≥80% Excelente · 65–79 Bom · 50–64 Neutro · 35–49 Atenção
                 - Dados ainda não disponíveis nas APIs públicas
 
                 **Solução:** Infelizmente este ticker não possui dados fundamentalistas disponíveis nas fontes consultadas.
+                """)
+                else:
+                    st.info(f"""
+                💡 **Por que isso acontece?**
+
+                - Ticker na B3: `{ticker}.SA`
+
+                **Tentativas realizadas:**
+                1. ❌ Yahoo Finance (ticker .SA) - Sem dados
+                2. ❌ BRAPI (ativo na B3) - Sem dados
+
+                **Possíveis causas:**
+                - Ativo muito novo ou com baixíssimo volume
+                - FII/ETF sem métricas fundamentalistas clássicas (P/L, ROE) nas APIs
+                - Ticker não listado ou dados ainda indisponíveis nas APIs públicas
+
+                **Solução:** Este ativo não possui dados fundamentalistas disponíveis nas fontes consultadas.
                 """)
 
             # === MÓDULO DE MACHINE LEARNING ===
@@ -1120,14 +1171,21 @@ Faixas: **≥80% Excelente · 65–79 Bom · 50–64 Neutro · 35–49 Atenção
                 pass
 
             # === TRADINGVIEW SCREENER — DADOS AO VIVO ===
-            ticker_us_tv = mapear_ticker_us(ticker)
-            with st.spinner(f'Buscando dados TradingView para {ticker_us_tv}...'):
-                dados_tv = buscar_dados_tradingview(ticker_us_tv, ticker)
+            # BDR: consulta o ativo subjacente nos EUA. Ativo nativo da B3
+            # (ação/FII/ETF): consulta o próprio ticker no mercado brasileiro.
+            if eh_bdr(ticker):
+                ticker_tv = mapear_ticker_us(ticker)
+                mercado_tv = 'america'
+            else:
+                ticker_tv = ticker
+                mercado_tv = 'brazil'
+            with st.spinner(f'Buscando dados TradingView para {ticker_tv}...'):
+                dados_tv = buscar_dados_tradingview(ticker_tv, ticker, mercado=mercado_tv)
             peers_tv = []
             if not dados_tv.get('erro') and dados_tv.get('setor'):
                 peers_tv = buscar_peers_tradingview(
-                    dados_tv['setor'], ticker_us_tv, top_n=5)
-            renderizar_painel_tradingview(dados_tv, ticker_us_tv, row['Empresa'], peers_tv)
+                    dados_tv['setor'], ticker_tv, top_n=5, mercado=mercado_tv)
+            renderizar_painel_tradingview(dados_tv, ticker_tv, row['Empresa'], peers_tv)
 
             # === SEÇÃO DE NOTÍCIAS ===
             st.markdown("---")
@@ -1143,7 +1201,13 @@ Reúne as notícias dos **últimos 30 dias** da empresa-mãe, de várias fontes 
 > Use como **contexto qualitativo** — notícias explicam movimentos, mas não substituem a análise técnica e o gerenciamento de risco.
                 """)
 
-            ticker_us_news    = mapear_ticker_us(ticker)
+            # BDR: notícias da empresa-mãe pelo ticker US. Ativo nativo da B3:
+            # notícias pelo próprio ticker .SA (Yahoo) + nome em português, que o
+            # Google News resolve para o noticiário brasileiro.
+            if eh_bdr(ticker):
+                ticker_us_news = mapear_ticker_us(ticker)
+            else:
+                ticker_us_news = f"{ticker}.SA"
             # Nome da empresa: prioriza fund_data, depois NOMES_BDRS, depois row['Empresa']
             empresa_nome_news = (
                 NOMES_BDRS.get(ticker)
@@ -1271,7 +1335,7 @@ Reúne as notícias dos **últimos 30 dias** da empresa-mãe, de várias fontes 
             <div style='background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
                         padding: 2rem; border-radius: 8px; text-align: center; margin: 2rem 0;'>
                 <p style='margin: 0; color: #3730a3; font-size: 1.1rem; font-weight: 500;'>
-                    👆 Selecione uma BDR na tabela acima para visualizar a análise técnica completa
+                    👆 Selecione um ativo na tabela acima para visualizar a análise técnica completa
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1291,7 +1355,7 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; padding: 2rem 0; color: #64748b;'>
     <p style='margin: 0; font-size: 0.9rem;'>
-        <strong>Monitor BDR - Swing Trade Pro</strong> | Powered by Python, yFinance & Streamlit
+        <strong>Monitor B3 - Swing Trade Pro</strong> | Powered by Python, yFinance & Streamlit
     </p>
     <p style='margin: 0.5rem 0 0 0; font-size: 0.8rem;'>
         ⚠️ Este sistema é apenas para fins educacionais. Não constitui recomendação de investimento.
