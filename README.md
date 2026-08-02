@@ -1,7 +1,16 @@
-# monitor-quedas-bdr4-modularizado
-Monitor quedas de BDRs modularizado.
+# monitor-quedas-b3-modularizado
+Monitor de quedas de ativos da B3, modularizado.
 
-Este projeto é uma aplicação [Streamlit](https://streamlit.io/) avançada para monitoramento, análise e predição de BDRs (Brazilian Depositary Receipts) listados na B3, focada em Swing Trade.
+Este projeto é uma aplicação [Streamlit](https://streamlit.io/) avançada para monitoramento, análise e predição de **todo o mercado à vista da B3** — **Ações** (ON/PN/Units), **BDRs** (Brazilian Depositary Receipts), **FIIs** (Fundos Imobiliários) e **ETFs** nacionais — focada em Swing Trade.
+
+## 🌐 Universo de ativos (Ações, BDRs, FIIs e ETFs)
+
+O scanner varre o **mercado brasileiro inteiro** via TradingView Screener, filtrando pelo **tipo do ativo** e classificando cada papel automaticamente em **Ação / BDR / FII / ETF**. Assim, não há uma lista fixa a manter à mão: novos papéis listados na B3 entram na varredura automaticamente.
+
+- **Seleção do universo:** escolha quais classes varrer (todas por padrão) antes de atualizar a análise.
+- **Filtro por classe:** a tabela de oportunidades traz uma coluna **Classe** e um filtro para restringir o que aparece.
+- **Análise por ativo (class-aware):** para **BDRs**, os fundamentos, o painel TradingView e as notícias usam a **empresa-mãe no exterior**; para **ativos nativos da B3** (ações/FIIs/ETFs), tudo é buscado direto na B3 (Yahoo `.SA`, BRAPI e TradingView mercado *brazil*), sem o mapeamento para o ticker americano.
+- A classificação (`modules/ativos.py`) usa os metadados `type`/`typespecs` do TradingView e, como reserva, o sufixo do código de negociação.
 
 ## 📂 Estrutura do Projeto (Módulos)
 

@@ -501,6 +501,11 @@ def analisar_oportunidades(df_calc, mapa_nomes):
             nome_completo = mapa_nomes.get(ticker, ticker)
             nome_curto = _gerar_nome_curto(ticker, nome_completo)
 
+            # Classe do ativo (Ação/BDR/FII/ETF) — sem metadados do TradingView
+            # neste caminho, a classificação recai sobre o sufixo do ticker.
+            from modules.ativos import classificar_ativo
+            classe = classificar_ativo(ticker)
+
             # Volume financeiro (R$/dia) — coerente com o caminho TradingView
             _vol_base = vol_medio if (pd.notna(vol_medio) and vol_medio > 0) else (volume or 0)
             volume_financeiro = float(_vol_base or 0) * float(preco or 0)
@@ -508,6 +513,7 @@ def analisar_oportunidades(df_calc, mapa_nomes):
             resultados.append({
                 'Ticker': ticker,
                 'Empresa': nome_curto,
+                'Classe': classe,
                 'Preco': preco,
                 'Volume': volume_financeiro,
                 'Queda_Dia': queda_dia,
@@ -540,6 +546,8 @@ _TV_CAMPOS = [
     'average_volume_10d_calc', 'RSI', 'Stoch.K',
     'MACD.macd', 'MACD.signal', 'BB.lower',
     'EMA20', 'EMA50', 'EMA200',
+    # Metadados usados para classificar o ativo (Ação/BDR/FII/ETF).
+    'type', 'typespecs',
 ]
 
 
@@ -582,12 +590,93 @@ def _f(valor, padrao=None):
         return padrao
 
 
+def _processar_row_tv(row, mapa_nomes):
+    """Converte UMA linha do screener do TradingView no dict de oportunidade.
+
+    Devolve ``None`` quando a linha não é uma queda válida (sem preço/variação
+    ou variação >= 0). O dict devolvido é o mesmo formato de
+    ``analisar_oportunidades``, acrescido do campo ``Classe`` (Ação/BDR/FII/ETF).
+    """
+    from modules.ativos import classificar_ativo
+
+    ticker = str(row.get('name', '')).split(':')[-1]
+    preco = _f(row.get('close'))
+    queda_dia = _f(row.get('change'))
+    if preco is None or queda_dia is None:
+        return None
+    if queda_dia >= 0:        # só quedas, como no caminho original
+        return None
+
+    rsi = _f(row.get('RSI'), 50.0)
+    stoch = _f(row.get('Stoch.K'), 50.0)
+    macd_hist = _f(row.get('MACD.macd'), 0.0) - _f(row.get('MACD.signal'), 0.0)
+    bb_lower = _f(row.get('BB.lower'))
+    volume = _f(row.get('volume'), 0.0)
+    vol_medio = _f(row.get('average_volume_10d_calc'), 0.0)
+    gap = _f(row.get('gap'), 0.0)
+
+    # Volume FINANCEIRO (R$/dia): volume médio de 10d (ou do dia) × preço.
+    # Mais legível e coerente com o ranking de liquidez do que a contagem
+    # de ações, que para papéis pouco líquidos costuma ser baixíssima.
+    vol_base = vol_medio if vol_medio > 0 else volume
+    volume_financeiro = vol_base * preco
+
+    # Reaproveita gerar_sinal montando a linha com os campos esperados.
+    # Sem histórico, o sinal de Fibonacci é ignorado (calcular_fibonacci(None)).
+    linha = pd.Series({
+        'Close': preco,
+        'RSI14': rsi,
+        'Stoch_K': stoch,
+        'MACD_Hist': macd_hist,
+        'BB_Lower': bb_lower,
+        'EMA20': _f(row.get('EMA20')),
+        'EMA50': _f(row.get('EMA50')),
+        'EMA200': _f(row.get('EMA200')),
+    })
+    sinais, score, classificacao, explicacoes = gerar_sinal(linha, None)
+
+    is_index = ((100 - rsi) + (100 - stoch)) / 2
+    ranking_liq = _liquidez(vol_medio, preco, volume)
+
+    # Classe do ativo (Ação/BDR/FII/ETF) a partir dos metadados do TradingView.
+    classe = classificar_ativo(ticker, row.get('type'), row.get('typespecs'))
+
+    # Prefere o nome curado (NOMES_BDRS) à descrição crua do TradingView
+    # (que traz ruído tipo "Shs"/"Unsponsored"); cai para a descrição só
+    # quando o ticker não está no dicionário curado.
+    nome_completo = ((mapa_nomes or {}).get(ticker)
+                     or str(row.get('description') or '').strip()
+                     or ticker)
+    nome_curto = _gerar_nome_curto(ticker, nome_completo)
+
+    return {
+        'Ticker': ticker,
+        'Empresa': nome_curto,
+        'Classe': classe,
+        'Preco': preco,
+        'Volume': volume_financeiro,
+        'Queda_Dia': queda_dia,
+        'Gap': gap,
+        'IS': is_index,
+        'RSI14': rsi,
+        'Stoch': stoch,
+        'Potencial': classificacao,
+        'Score': score,
+        'Sinais': ", ".join(sinais) if sinais else "-",
+        'Explicacoes': explicacoes,
+        'Liquidez': int(ranking_liq),
+        'EMA20': _f(row.get('EMA20')),
+        'EMA50': _f(row.get('EMA50')),
+        'EMA200': _f(row.get('EMA200')),
+    }
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def buscar_oportunidades_tv(lista_bdrs, mapa_nomes):
     """Scanner em massa via TradingView — substitui o caminho yfinance.
 
     Faz UMA requisição ao screener do mercado brasileiro, filtrando pelos
-    tickers de BDR informados, e devolve a MESMA lista de dicts de
+    tickers informados, e devolve a MESMA lista de dicts de
     ``analisar_oportunidades`` (já filtrada para quedas no dia).
 
     Retorna ``None`` se a lib não existir ou a consulta falhar, para que o
@@ -619,72 +708,70 @@ def buscar_oportunidades_tv(lista_bdrs, mapa_nomes):
     resultados = []
     for _, row in df.iterrows():
         try:
-            ticker = str(row.get('name', '')).split(':')[-1]
-            preco = _f(row.get('close'))
-            queda_dia = _f(row.get('change'))
-            if preco is None or queda_dia is None:
+            opp = _processar_row_tv(row, mapa_nomes)
+            if opp is not None:
+                resultados.append(opp)
+        except Exception:
+            continue
+
+    return resultados or None
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def buscar_oportunidades_mercado(classes=None, mapa_nomes=None):
+    """Scanner em massa de TODO o mercado à vista da B3 via TradingView.
+
+    Ao contrário de ``buscar_oportunidades_tv`` (que filtra por uma lista fixa
+    de tickers), esta função varre o mercado brasileiro inteiro filtrando por
+    **tipo de ativo** e classifica cada papel em Ação/BDR/FII/ETF. Assim, cobre
+    automaticamente todas as ações, BDRs, FIIs e ETFs listados — sem depender de
+    uma lista curada que precise ser mantida à mão.
+
+    ``classes`` restringe a varredura às classes desejadas (ex.: ['Ação']);
+    ``None`` traz todas. ``mapa_nomes`` (opcional) fornece nomes curados
+    preferenciais (ex.: NOMES_BDRS). Retorna a lista de dicts de oportunidade
+    (com o campo ``Classe``) já filtrada para quedas no dia, ou ``None`` se a
+    lib não existir ou a consulta falhar.
+    """
+    try:
+        from tradingview_screener import Query, col
+    except Exception:
+        return None
+
+    from modules.ativos import tv_types_para_classes
+
+    tipos = tv_types_para_classes(classes)
+
+    try:
+        consulta = (
+            Query()
+            .select(*_TV_CAMPOS)
+            .set_markets('brazil')
+            .limit(10000)
+        )
+        # Filtra por tipo no servidor quando o usuário restringe as classes —
+        # reduz o volume trafegado. Sem restrição, traz o mercado inteiro.
+        if tipos:
+            consulta = consulta.where(col('type').isin(sorted(tipos)))
+        _, df = consulta.get_scanner_data()
+    except Exception:
+        return None
+
+    if df is None or df.empty:
+        return None
+
+    classes_set = set(classes) if classes else None
+    resultados = []
+    for _, row in df.iterrows():
+        try:
+            opp = _processar_row_tv(row, mapa_nomes)
+            if opp is None:
                 continue
-            if queda_dia >= 0:        # só quedas, como no caminho original
+            # Refina pelo campo Classe (o filtro por 'type' não separa ETF de FII,
+            # ambos 'fund'; aqui aplicamos a classe já discriminada).
+            if classes_set is not None and opp['Classe'] not in classes_set:
                 continue
-
-            rsi = _f(row.get('RSI'), 50.0)
-            stoch = _f(row.get('Stoch.K'), 50.0)
-            macd_hist = _f(row.get('MACD.macd'), 0.0) - _f(row.get('MACD.signal'), 0.0)
-            bb_lower = _f(row.get('BB.lower'))
-            volume = _f(row.get('volume'), 0.0)
-            vol_medio = _f(row.get('average_volume_10d_calc'), 0.0)
-            gap = _f(row.get('gap'), 0.0)
-
-            # Volume FINANCEIRO (R$/dia): volume médio de 10d (ou do dia) × preço.
-            # Mais legível e coerente com o ranking de liquidez do que a contagem
-            # de ações, que para BDRs costuma ser baixíssima.
-            vol_base = vol_medio if vol_medio > 0 else volume
-            volume_financeiro = vol_base * preco
-
-            # Reaproveita gerar_sinal montando a linha com os campos esperados.
-            # Sem histórico, o sinal de Fibonacci é ignorado (calcular_fibonacci(None)).
-            linha = pd.Series({
-                'Close': preco,
-                'RSI14': rsi,
-                'Stoch_K': stoch,
-                'MACD_Hist': macd_hist,
-                'BB_Lower': bb_lower,
-                'EMA20': _f(row.get('EMA20')),
-                'EMA50': _f(row.get('EMA50')),
-                'EMA200': _f(row.get('EMA200')),
-            })
-            sinais, score, classificacao, explicacoes = gerar_sinal(linha, None)
-
-            is_index = ((100 - rsi) + (100 - stoch)) / 2
-            ranking_liq = _liquidez(vol_medio, preco, volume)
-
-            # Prefere o nome curado (NOMES_BDRS) à descrição crua do TradingView
-            # (que traz ruído tipo "Shs"/"Unsponsored"); cai para a descrição só
-            # quando o ticker não está no dicionário curado.
-            nome_completo = (mapa_nomes.get(ticker)
-                             or str(row.get('description') or '').strip()
-                             or ticker)
-            nome_curto = _gerar_nome_curto(ticker, nome_completo)
-
-            resultados.append({
-                'Ticker': ticker,
-                'Empresa': nome_curto,
-                'Preco': preco,
-                'Volume': volume_financeiro,
-                'Queda_Dia': queda_dia,
-                'Gap': gap,
-                'IS': is_index,
-                'RSI14': rsi,
-                'Stoch': stoch,
-                'Potencial': classificacao,
-                'Score': score,
-                'Sinais': ", ".join(sinais) if sinais else "-",
-                'Explicacoes': explicacoes,
-                'Liquidez': int(ranking_liq),
-                'EMA20': _f(row.get('EMA20')),
-                'EMA50': _f(row.get('EMA50')),
-                'EMA200': _f(row.get('EMA200')),
-            })
+            resultados.append(opp)
         except Exception:
             continue
 

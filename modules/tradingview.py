@@ -54,9 +54,12 @@ _TV_SETOR_YAHOO = {
 }
 
 
-def _buscar_tv_screener(ticker_us):
-    """Dados REAIS do TradingView (mercado 'america') para o ticker US, no mesmo
-    formato do dict do painel — incluindo a recomendação oficial (Recommend.All).
+def _buscar_tv_screener(ticker_us, mercado='america'):
+    """Dados REAIS do TradingView para o ticker, no mesmo formato do dict do
+    painel — incluindo a recomendação oficial (Recommend.All).
+
+    ``mercado`` seleciona o screener: ``'america'`` para o ativo subjacente de
+    um BDR nos EUA; ``'brazil'`` para um ativo nativo da B3 (ação/FII/ETF).
     Retorna ``None`` se a lib/consulta falhar (o chamador cai no yfinance)."""
     try:
         from tradingview_screener import Query, col
@@ -85,7 +88,7 @@ def _buscar_tv_screener(ticker_us):
                 Query()
                 .select(*campos)
                 .where(col('name') == ticker_us)
-                .set_markets('america')
+                .set_markets(mercado)
                 .limit(1)
                 .get_scanner_data()
             )
@@ -169,14 +172,18 @@ def _buscar_tv_screener(ticker_us):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def buscar_dados_tradingview(ticker_us, ticker_bdr=''):
+def buscar_dados_tradingview(ticker_us, ticker_bdr='', mercado='america'):
     """
     Busca os dados do painel. Tenta primeiro os dados REAIS do TradingView
-    (mercado 'america', incluindo a recomendação oficial Recommend.All) e, se
-    falhar, cai para o yfinance com indicadores calculados localmente.
+    (incluindo a recomendação oficial Recommend.All) e, se falhar, cai para o
+    yfinance com indicadores calculados localmente.
+
+    ``mercado='america'`` consulta o ativo subjacente de um BDR nos EUA;
+    ``mercado='brazil'`` consulta um ativo nativo da B3 (ação/FII/ETF), caso em
+    que o fallback yfinance usa o sufixo ``.SA``.
     """
     # 1) Dados reais do TradingView
-    _tv = _buscar_tv_screener(ticker_us)
+    _tv = _buscar_tv_screener(ticker_us, mercado=mercado)
     if _tv is not None:
         return _tv
 
@@ -184,10 +191,12 @@ def buscar_dados_tradingview(ticker_us, ticker_bdr=''):
     try:
         from modules.yf_session import criar_ticker
 
-        t    = criar_ticker(f'{ticker_us}')
+        # Ativos nativos da B3 negociam com sufixo .SA no Yahoo.
+        _yf_ticker = f'{ticker_us}.SA' if mercado == 'brazil' else f'{ticker_us}'
+        t    = criar_ticker(_yf_ticker)
         hist = t.history(period='1y', interval='1d', auto_adjust=True)
         if hist.empty:
-            return {'erro': f'Ticker {ticker_us} não encontrado no yfinance.'}
+            return {'erro': f'Ticker {_yf_ticker} não encontrado no yfinance.'}
 
         # ── Fundamentais: tenta fast_info primeiro, depois .info ─────────────
         info = {}
@@ -507,10 +516,13 @@ def buscar_peers_tradingview(setor, ticker_us_excluir, top_n=5):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def buscar_peers_tradingview(setor, ticker_us_excluir, top_n=6):
+def buscar_peers_tradingview(setor, ticker_us_excluir, top_n=6, mercado='america'):
     """
     Busca os principais peers do mesmo setor no TradingView,
     ordenados por volume relativo (momentum de mercado).
+
+    ``mercado`` seleciona o screener ('america' para peers do ativo US de um
+    BDR; 'brazil' para peers de um ativo nativo da B3).
     """
     try:
         from tradingview_screener import Query, col
@@ -528,7 +540,7 @@ def buscar_peers_tradingview(setor, ticker_us_excluir, top_n=6):
             )
             .order_by('market_cap_basic', ascending=False)
             .limit(top_n + 2)
-            .set_markets('america')
+            .set_markets(mercado)
             .get_scanner_data()
         )
         peers = []

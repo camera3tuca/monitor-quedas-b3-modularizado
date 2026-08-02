@@ -2102,14 +2102,25 @@ NOMES_BDRS = {
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def buscar_dados_fundamentalistas(ticker_bdr):
+def buscar_dados_fundamentalistas(ticker_bdr, nativo_b3=None):
     """
-    Busca dados fundamentalistas com fallback em cascata:
+    Busca dados fundamentalistas com fallback em cascata.
+
+    Para **BDRs** (padrão), busca pela empresa-mãe listada nos EUA:
     1. Yahoo Finance — empresa mãe (ticker US mapeado)
     2. BRAPI módulos completos — BDR na B3 com financialData/summaryDetail
     3. OpenBB / FMP — empresa mãe via API alternativa
     4. BRAPI básico — último recurso (preço e volume apenas)
+
+    Para **ativos nativos da B3** (ações, FIIs, ETFs, Units), o mapeamento para
+    a empresa-mãe nos EUA não se aplica: busca direto na B3 via Yahoo ``.SA`` e
+    BRAPI. ``nativo_b3`` força esse caminho; quando ``None``, é inferido pelo
+    sufixo do ticker.
     """
+    if nativo_b3 is None:
+        from modules.ativos import eh_ativo_nativo_b3
+        nativo_b3 = eh_ativo_nativo_b3(ticker_bdr)
+
     ticker_us = mapear_ticker_us(ticker_bdr)
 
     def _score_from_yf_info(info, fonte_label, ticker_label):
@@ -2239,6 +2250,63 @@ def buscar_dados_fundamentalistas(ticker_bdr):
             'preco_b3':       info.get('_preco_b3'),
             'variacao_b3':    info.get('_variacao_b3'),
         }
+
+    # ==================================================================
+    # ATIVO NATIVO DA B3 (ação / FII / ETF nacional / Unit)
+    # ==================================================================
+    # Negocia direto na B3 e tem fundamentos disponíveis via Yahoo ``.SA`` e
+    # BRAPI (em BRL). NÃO passa pela empresa-mãe nos EUA — o mapeamento de
+    # ticker US só faz sentido para BDRs e traria dados de outra empresa.
+    if nativo_b3:
+        # 1) Yahoo Finance no ticker .SA (fundamentos da própria empresa na B3)
+        try:
+            from modules.yf_session import criar_ticker
+            info = criar_ticker(f"{ticker_bdr}.SA").info
+            resultado = _score_from_yf_info(
+                info, f'Yahoo Finance — {ticker_bdr}.SA', f'{ticker_bdr}.SA')
+            if resultado:
+                return resultado
+        except Exception:
+            pass
+
+        # 2) BRAPI módulos completos — financialData/summaryDetail da B3
+        try:
+            info_brapi_full = buscar_dados_brapi_completo(ticker_bdr)
+            resultado = _score_from_yf_info(
+                info_brapi_full, f'BRAPI (B3) — {ticker_bdr}', ticker_bdr)
+            if resultado:
+                return resultado
+        except Exception:
+            pass
+
+        # 3) BRAPI básico — preço e volume apenas (último recurso)
+        try:
+            dados_brapi = buscar_dados_brapi(ticker_bdr)
+            if dados_brapi:
+                score, detalhes = calcular_score_brapi(dados_brapi)
+                return {
+                    'fonte': 'BRAPI básico (B3)',
+                    'ticker_fonte': ticker_bdr,
+                    'score': score,
+                    'detalhes': detalhes,
+                    'pe_ratio': None,
+                    'dividend_yield': None,
+                    'market_cap': dados_brapi.get('market_cap'),
+                    'revenue_growth': None,
+                    'recomendacao': None,
+                    'roe': None,
+                    'profit_margin': None,
+                    'peg': None,
+                    'setor': dados_brapi.get('setor', 'N/A'),
+                    'industry': 'N/A',
+                    'volume_b3': dados_brapi.get('volume'),
+                    'preco_b3': dados_brapi.get('preco'),
+                    'variacao_b3': dados_brapi.get('variacao'),
+                }
+        except Exception:
+            pass
+
+        return None
 
     # ------------------------------------------------------------------
     # TENTATIVA 1: Yahoo Finance — busca pelo NOME da empresa mãe
