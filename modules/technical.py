@@ -738,26 +738,29 @@ def buscar_oportunidades_mercado(classes=None, mapa_nomes=None):
     lib não existir ou a consulta falhar.
     """
     try:
-        from tradingview_screener import Query, col
+        from tradingview_screener import Query, col, And
     except Exception:
         return None
 
     from modules.ativos import tv_types_para_classes
 
-    tipos = tv_types_para_classes(classes)
+    # Tipos do TradingView que cobrem as classes pedidas (todos, por padrão).
+    tipos = tv_types_para_classes(classes) or {'stock', 'dr', 'fund'}
 
     try:
-        consulta = (
+        # IMPORTANTE: usamos ``where2`` (não ``where``) para SUBSTITUIR o filtro
+        # padrão do Query(), que só admite ações common/preferred + DR + fundos
+        # SEM 'etf'/'mutual'/'closedend' — ou seja, o padrão exclui ETFs e Units.
+        # Com ``where2`` filtramos apenas por tipo e deixamos ETFs, FIIs e Units
+        # passarem; a separação fina (ETF × FII) é feita na classificação abaixo.
+        _, df = (
             Query()
             .select(*_TV_CAMPOS)
+            .where2(And(col('type').isin(sorted(tipos))))
             .set_markets('brazil')
             .limit(10000)
+            .get_scanner_data()
         )
-        # Filtra por tipo no servidor quando o usuário restringe as classes —
-        # reduz o volume trafegado. Sem restrição, traz o mercado inteiro.
-        if tipos:
-            consulta = consulta.where(col('type').isin(sorted(tipos)))
-        _, df = consulta.get_scanner_data()
     except Exception:
         return None
 
