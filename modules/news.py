@@ -13,11 +13,16 @@ import html as html_lib
 import re
 
 def _limpar_html(texto):
-    """Remove tags HTML e decodifica entidades."""
+    """Remove tags HTML, decodifica entidades e normaliza espaços em branco."""
     if not texto:
         return ""
     texto = re.sub(r'<[^>]+>', '', texto)
     texto = html_lib.unescape(texto)
+    # Colapsa quebras de linha e espaços múltiplos num único espaço. Sem isso,
+    # títulos/descrições multi-linha (comuns no Google News em português) injetam
+    # '\n' no HTML do card e o Markdown do Streamlit passa a tratar as linhas
+    # indentadas do template como bloco de código, exibindo o HTML como texto.
+    texto = re.sub(r'\s+', ' ', texto)
     return texto.strip()
 
 
@@ -537,7 +542,7 @@ def _renderizar_card_noticia(noticia):
         f"-webkit-box-orient:vertical;overflow:hidden;'>{desc}</p>"
     ) if desc else ""
 
-    return f"""
+    html = f"""
     <div style='background:{bg};border:1px solid {badge_bg};
                 border-left:3px solid {cor_fonte};
                 border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;'>
@@ -556,3 +561,7 @@ def _renderizar_card_noticia(noticia):
                   text-decoration:none;line-height:1.35;display:block;'>{titulo}</a>
         {desc_html}
     </div>"""
+    # Achata o HTML em uma única linha (troca quebra+indentação por espaço). Sem
+    # indentação de 4+ espaços, o Markdown do Streamlit nunca interpreta o card
+    # como bloco de código, mesmo que algum campo ainda traga conteúdo inesperado.
+    return re.sub(r'\n\s*', ' ', html).strip()
