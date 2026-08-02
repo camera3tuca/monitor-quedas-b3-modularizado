@@ -597,9 +597,13 @@ def _processar_row_tv(row, mapa_nomes):
     ou variação >= 0). O dict devolvido é o mesmo formato de
     ``analisar_oportunidades``, acrescido do campo ``Classe`` (Ação/BDR/FII/ETF).
     """
-    from modules.ativos import classificar_ativo
+    from modules.ativos import classificar_ativo, eh_fracionario
 
     ticker = str(row.get('name', '')).split(':')[-1]
+    # Descarta o mercado fracionário (sufixo 'F'): é duplicata ilíquida do
+    # lote-padrão e não tem histórico no Yahoo (não existe PETR4F.SA).
+    if eh_fracionario(ticker):
+        return None
     preco = _f(row.get('close'))
     queda_dia = _f(row.get('change'))
     if preco is None or queda_dia is None:
@@ -806,6 +810,63 @@ def _indicadores_basicos(df):
     return df
 
 
+# Faixas aceitas pela BRAPI (histórico). Períodos do yfinance fora desta lista
+# caem para '1y'.
+_BRAPI_RANGES = {'1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'}
+
+
+def _periodo_para_brapi(periodo):
+    p = str(periodo or '1y').strip().lower()
+    return p if p in _BRAPI_RANGES else '1y'
+
+
+def obter_historico_brapi(ticker, periodo=PERIODO):
+    """Histórico diário + indicadores de UM ticker via BRAPI (série da B3).
+
+    Fallback do ``obter_historico_ticker`` quando o Yahoo falha (bloqueio de IP,
+    comum em nuvem) ou não tem o papel. A BRAPI entrega ``historicalDataPrice``
+    para qualquer ativo listado na B3 (ações, FIIs, ETFs e BDRs). Retorna um
+    DataFrame de colunas simples (Open/High/Low/Close/Volume + indicadores) ou
+    ``None``.
+    """
+    try:
+        from modules.fundamentals import BRAPI_TOKEN
+        rng = _periodo_para_brapi(periodo)
+        url = (f"https://brapi.dev/api/quote/{ticker}"
+               f"?range={rng}&interval=1d&token={BRAPI_TOKEN}")
+        resp = requests.get(url, timeout=20)
+        if resp.status_code != 200:
+            return None
+        results = (resp.json() or {}).get('results') or []
+        if not results:
+            return None
+        hist = results[0].get('historicalDataPrice') or []
+        if not hist:
+            return None
+
+        df = pd.DataFrame(hist)
+        if 'date' not in df.columns or 'close' not in df.columns:
+            return None
+        df['Date'] = pd.to_datetime(df['date'], unit='s')
+        df = df.set_index('Date')
+        df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low',
+                                'close': 'Close', 'volume': 'Volume'})
+        # Garante as colunas exigidas pelos indicadores (High/Low caem no Close
+        # se a BRAPI não trouxer, e Volume vira 0).
+        for c in ('Open', 'High', 'Low'):
+            if c not in df.columns:
+                df[c] = df['Close']
+        if 'Volume' not in df.columns:
+            df['Volume'] = 0
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna(subset=['Close'])
+        df = df[~df.index.duplicated(keep='last')].sort_index()
+        if df.empty:
+            return None
+        return _indicadores_basicos(df)
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def obter_historico_ticker(ticker, periodo=PERIODO):
     """Histórico diário + indicadores de UM ticker (para gráfico/detalhe).
@@ -817,20 +878,29 @@ def obter_historico_ticker(ticker, periodo=PERIODO):
     para que os indicadores nesses timeframes tenham barras suficientes. Retorna
     um DataFrame de colunas simples (Close, Open, High, Low, Volume + indicadores)
     ou ``None``.
+
+    Tenta primeiro o Yahoo (``.SA``); se falhar ou vier vazio, cai para o
+    histórico da B3 via BRAPI — cobre o bloqueio de IP do Yahoo (comum em nuvem)
+    e os ativos nativos, que não têm o fallback do ativo subjacente nos EUA.
     """
+    df = None
     try:
         df = _yf_baixar(f"{ticker}.SA", period=periodo, auto_adjust=True,
                         progress=False, timeout=30)
-        if df is None or df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.dropna(subset=['Close'])
-        if df.empty:
-            return None
-        return _indicadores_basicos(df)
+        if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=['Close'])
+        else:
+            df = None
     except Exception:
-        return None
+        df = None
+
+    if df is not None and not df.empty:
+        return _indicadores_basicos(df)
+
+    # Fallback: histórico da B3 via BRAPI.
+    return obter_historico_brapi(ticker, periodo)
 
 
 @st.cache_data(ttl=900, show_spinner=False)

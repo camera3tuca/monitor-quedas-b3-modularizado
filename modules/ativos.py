@@ -51,6 +51,18 @@ def eh_bdr(ticker):
     return str(ticker or '').strip().upper()[-2:] in TERMINACOES_BDR
 
 
+def eh_fracionario(ticker):
+    """True para tickers do mercado fracionário da B3 (sufixo 'F').
+
+    Na B3 o mercado fracionário adiciona um 'F' ao código normal (ex.: PETR4 ->
+    PETR4F, EQPA5 -> EQPA5F, AAPL34 -> AAPL34F). São duplicatas de baixa liquidez
+    do lote-padrão e **não existem no Yahoo Finance** (não há ``PETR4F.SA``), por
+    isso o scanner os descarta em favor do lote-padrão equivalente.
+    """
+    t = str(ticker or '').strip().upper()
+    return len(t) >= 2 and t.endswith('F') and t[-2].isdigit()
+
+
 def eh_ativo_nativo_b3(ticker):
     """True para ativos nativos da B3 (ações, Units, FIIs, ETFs nacionais).
 

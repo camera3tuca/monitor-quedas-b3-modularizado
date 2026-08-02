@@ -11,6 +11,8 @@ O scanner varre o **mercado brasileiro inteiro** via TradingView Screener, filtr
 - **Filtro por classe:** a tabela de oportunidades traz uma coluna **Classe** e um filtro para restringir o que aparece.
 - **Análise por ativo (class-aware):** para **BDRs**, os fundamentos, o painel TradingView e as notícias usam a **empresa-mãe no exterior**; para **ativos nativos da B3** (ações/FIIs/ETFs), tudo é buscado direto na B3 (Yahoo `.SA`, BRAPI e TradingView mercado *brazil*), sem o mapeamento para o ticker americano.
 - A classificação (`modules/ativos.py`) usa os metadados `type`/`typespecs` do TradingView e, como reserva, o sufixo do código de negociação.
+- **Mercado fracionário descartado:** tickers com sufixo `F` (ex.: `PETR4F`) são duplicatas de baixa liquidez do lote-padrão e não têm histórico no Yahoo, por isso são omitidos do scanner em favor do lote-padrão equivalente.
+- **Fallback de histórico via BRAPI:** o gráfico e os módulos (Triple Screen, ML, RL, Minervini, Flow) tentam o Yahoo `.SA` e, se ele falhar (bloqueio de IP, comum em nuvem), caem para a série histórica da B3 na BRAPI — os ativos nativos deixam de ficar "sem histórico".
 
 ## 📂 Estrutura do Projeto (Módulos)
 
