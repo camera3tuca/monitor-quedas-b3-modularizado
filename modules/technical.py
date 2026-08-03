@@ -748,15 +748,21 @@ def buscar_oportunidades_mercado(classes=None, mapa_nomes=None):
     tipos = tv_types_para_classes(classes) or {'stock', 'dr', 'fund'}
 
     try:
-        # IMPORTANTE: usamos ``where2`` (não ``where``) para SUBSTITUIR o filtro
-        # padrão do Query(), que só admite ações common/preferred + DR + fundos
-        # SEM 'etf'/'mutual'/'closedend' — ou seja, o padrão exclui ETFs e Units.
-        # Com ``where2`` filtramos apenas por tipo e deixamos ETFs, FIIs e Units
-        # passarem; a separação fina (ETF × FII) é feita na classificação abaixo.
+        # O Query() traz DOIS filtros padrão que atrapalham a varredura ampla:
+        #   • ``filter``  = is_primary == True  → exclui BDRs (cuja listagem
+        #     primária é a ação-mãe no exterior, não o BDR na B3);
+        #   • ``filter2`` = ações common/preferred + DR + fundos SEM
+        #     'etf'/'mutual'/'closedend' → exclui ETFs e Units.
+        # Sobrescrevemos AMBOS com um filtro só por tipo (``where`` limpa o
+        # is_primary; ``where2`` substitui o filtro restritivo), deixando ações,
+        # BDRs, FIIs, ETFs e Units passarem. A separação fina (ETF × FII) e o
+        # descarte de não-alvos ficam na classificação abaixo.
+        tipos_ord = sorted(tipos)
         _, df = (
             Query()
             .select(*_TV_CAMPOS)
-            .where2(And(col('type').isin(sorted(tipos))))
+            .where(col('type').isin(tipos_ord))
+            .where2(And(col('type').isin(tipos_ord)))
             .set_markets('brazil')
             .limit(10000)
             .get_scanner_data()
