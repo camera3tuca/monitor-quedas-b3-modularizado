@@ -21,8 +21,14 @@ de um ativo nativo da B3 (que negocia direto via ``.SA``/BRAPI).
 TERMINACOES_BDR = ('31', '32', '33', '34', '35', '39')
 TERMINACAO_ETF_BDR = '39'
 
-# Classes reconhecidas pelo app (ordem usada na UI).
-CLASSES = ('Ação', 'BDR', 'FII', 'ETF')
+# Classes oferecidas/varridas pelo app (ordem usada na UI).
+#
+# FIIs foram removidos do universo a pedido do uso do app. Ainda assim,
+# ``classificar_ativo`` continua identificando FIIs (typespec 'reit'): isso é
+# necessário para EXCLUÍ-los corretamente do resultado — sem essa distinção, um
+# fundo imobiliário seria rotulado como ETF por engano. Para reincluir FIIs,
+# basta acrescentar 'FII' a esta tupla.
+CLASSES = ('Ação', 'BDR', 'ETF')
 
 # Mapa Classe -> tipo(s) do TradingView, para filtrar a varredura no servidor.
 CLASSE_PARA_TV_TYPE = {
