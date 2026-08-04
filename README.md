@@ -1,11 +1,11 @@
 # monitor-quedas-b3-modularizado
 Monitor de quedas de ativos da B3, modularizado.
 
-Este projeto é uma aplicação [Streamlit](https://streamlit.io/) avançada para monitoramento, análise e predição de **todo o mercado à vista da B3** — **Ações** (ON/PN/Units), **BDRs** (Brazilian Depositary Receipts), **FIIs** (Fundos Imobiliários) e **ETFs** nacionais — focada em Swing Trade.
+Este projeto é uma aplicação [Streamlit](https://streamlit.io/) avançada para monitoramento, análise e predição do **mercado à vista da B3** — **Ações** (ON/PN/Units), **BDRs** (Brazilian Depositary Receipts) e **ETFs** nacionais — focada em Swing Trade.
 
-## 🌐 Universo de ativos (Ações, BDRs, FIIs e ETFs)
+## 🌐 Universo de ativos (Ações, BDRs e ETFs)
 
-O scanner varre o **mercado brasileiro inteiro** via TradingView Screener, filtrando pelo **tipo do ativo** e classificando cada papel automaticamente em **Ação / BDR / FII / ETF**. Assim, não há uma lista fixa a manter à mão: novos papéis listados na B3 entram na varredura automaticamente.
+O scanner varre o **mercado brasileiro** via TradingView Screener, filtrando pelo **tipo do ativo** e classificando cada papel automaticamente em **Ação / BDR / ETF**. Assim, não há uma lista fixa a manter à mão: novos papéis listados na B3 entram na varredura automaticamente. (FIIs são identificados internamente e omitidos; para reincluí-los, basta adicionar `'FII'` a `CLASSES` em `modules/ativos.py`.)
 
 - **Seleção do universo:** escolha quais classes varrer (todas por padrão) antes de atualizar a análise.
 - **Filtro por classe:** a tabela de oportunidades traz uma coluna **Classe** e um filtro para restringir o que aparece.

@@ -364,59 +364,95 @@ def _eh_etf_ticker(ticker):
     return str(ticker).strip().upper().endswith('39')
 
 
+# Conectores (preposições/artigos) que ficam em minúsculas no meio do nome e
+# nunca encerram um nome exibido (ex.: evita "Ishares Ibovespa Fundo De").
+_CONECTORES = {'DE', 'DA', 'DO', 'DAS', 'DOS', 'E', 'DI', 'DU', 'DEL', 'VAN', 'VON'}
+
+
 def _titulo_nome(texto):
-    """Title Case preservando acrônimos curtos em maiúsculas (KLA, MKS, AMD, IBM)."""
+    """Title Case preservando acrônimos curtos em maiúsculas (KLA, MKS, AMD, IBM)
+    e mantendo conectores (de, do, da...) em minúsculas quando no meio do nome."""
     palavras = []
-    for w in texto.replace(',', '').split():
+    for i, w in enumerate(texto.replace(',', '').split()):
         nucleo = w.replace('.', '')
         if nucleo.isupper() and 2 <= len(nucleo) <= 4:
-            palavras.append(w)          # acrônimo → mantém como está
+            palavras.append(w)                       # acrônimo → mantém como está
+        elif i > 0 and nucleo.upper() in _CONECTORES:
+            palavras.append(w.lower())               # conector no meio → minúsculo
         else:
             palavras.append(w.title())
     return " ".join(palavras)
 
 
-def _gerar_nome_curto(ticker, nome_completo):
-    """
-    Gera um nome curto e diferenciado para exibição na tabela.
+# Palavras estruturais/ruído removidas do nome para exibição. Inclui os sufixos
+# de BDR/ADR ("... Brazilian Depositary Receipt", "Sponsored ADR", "Ordinary
+# Shares Representing...") que, antes, poluíam a coluna Empresa (ex.: "Xerox
+# Brazilian", "Chargepoint Brazilian").
+_NOME_IGNORE = {
+    'INC', 'CORP', 'CORPORATION', 'INCORPORATED', 'LTD', 'S.A.', 'SA',
+    'GMBH', 'PLC', 'GROUP', 'HOLDINGS', 'HOLDING', 'CO', 'LLC', 'LP',
+    'SHS', 'SHARES', 'SHARE', 'UNSPONSORED', 'SPONSORED', 'ADR', 'ADS',
+    'COMMON', 'STOCK', 'CLASS', 'REGISTERED', 'REIT', 'NV', 'AG', 'AB',
+    'SE', 'THE', 'COMPANY', 'CIA', 'COMPANHIA',
+    # Ruído específico de BDR/ADR
+    'BRAZILIAN', 'DEPOSITARY', 'DEPOSITORY', 'RECEIPT', 'RECEIPTS',
+    'REPRESENTING', 'REPR', 'ORD', 'ORDINARY', 'EACH', 'UNIT', 'UNITS',
+    'N/A',
+}
 
-    Para ETFs (terminação '39'), o padrão "iShares MSCI X", "iShares Core Y",
-    "Global X Z" etc. faz com que cortar para 2 palavras gere nomes
-    repetidos e genéricos (ex.: "Ishares Msci" para várias linhas).
-    Nesses casos, usamos mais palavras (até 4) para manter a parte
-    diferenciadora do nome (país/região/tema do fundo).
 
-    Para ações normais, mantém o comportamento original (2 palavras úteis).
+def _montar_nome(palavras, max_palavras=4, max_chars=34):
+    """Junta as primeiras palavras úteis respeitando um limite de palavras e de
+    caracteres — mantém o nome completo o quanto couber, sem estourar a coluna.
+    Remove conectores presos ao final (ex.: "... Fundo De" -> "... Fundo")."""
+    out = []
+    for p in palavras[:max_palavras]:
+        candidato = " ".join(out + [p])
+        if out and len(candidato) > max_chars:
+            break
+        out.append(p)
+    # Não termina em conector (de/do/da/e...)
+    while len(out) > 1 and out[-1].upper().replace('.', '') in _CONECTORES:
+        out.pop()
+    return " ".join(out) if out else (palavras[0] if palavras else "")
+
+
+def _gerar_nome_curto(ticker, nome_completo, classe=None):
     """
-    if nome_completo == ticker:
+    Gera um nome enxuto (mas o mais completo possível) para a coluna Empresa.
+
+    Remove ruído estrutural (Inc., Corp., "Brazilian Depositary Receipt",
+    "Sponsored ADR" etc.) e mantém até ~4 palavras úteis / 34 caracteres — assim
+    "Xerox Holdings Brazilian Depositary Receipt" vira "Xerox Holdings" e
+    "Banco Mercantil do Brasil" aparece por inteiro, em vez de cortado em duas
+    palavras.
+
+    ``classe`` (Ação/BDR/ETF), quando informada, habilita a limpeza dos termos
+    de estrutura de fundo apenas em ETFs — assim ações como "Northern Trust" ou
+    "XP Investimentos" não perdem parte do nome.
+    """
+    if not nome_completo or nome_completo == ticker:
         return ticker
 
-    ignore_list = ['INC', 'CORP', 'CORPORATION', 'INCORPORATED', 'LTD', 'S.A.',
-                    'GMBH', 'PLC', 'GROUP', 'HOLDINGS', 'HOLDING', 'CO', 'LLC',
-                    'SHS', 'SHARES', 'UNSPONSORED', 'SPONSORED', 'ADR', 'ADS',
-                    'COMMON', 'STOCK', 'CLASS', 'REGISTERED', 'REIT', 'NV', 'AG',
-                    'SE', 'THE', 'COMPANY']
     palavras = nome_completo.split()
     palavras_uteis = [p for p in palavras
-                      if p.upper().replace('.', '').replace(',', '') not in ignore_list]
+                      if p.upper().replace('.', '').replace(',', '') not in _NOME_IGNORE]
 
     if not palavras_uteis:
         return _titulo_nome(nome_completo)
 
-    if _eh_etf_ticker(ticker):
-        # Para ETFs, mantém mais palavras para preservar o diferencial
-        # (ex.: "iShares MSCI Brazil ETF" -> "Ishares Msci Brazil")
-        n_palavras = min(4, len(palavras_uteis))
-        # Remove o sufixo genérico "ETF"/"Fund"/"Trust" do final, se sobrar espaço
+    # ETF nativo (classe 'ETF') ou BDR de ETF (terminação 39): remove os termos
+    # genéricos de estrutura de fundo, em inglês e português ("Fundo de Índice de
+    # Investimento"), preservando a parte que diferencia o fundo (índice/tema).
+    if classe == 'ETF' or _eh_etf_ticker(ticker):
+        _ruido_fundo = {'ETF', 'FUND', 'TRUST', 'FUNDO', 'INDICE', 'ÍNDICE',
+                        'INVESTIMENTO', 'IMOBILIARIO', 'IMOBILIÁRIO'}
         candidatos = [p for p in palavras_uteis
-                      if p.upper() not in ('ETF', 'FUND', 'TRUST')]
+                      if p.upper() not in _ruido_fundo]
         if len(candidatos) >= 2:
             palavras_uteis = candidatos
-        nome_curto = " ".join(palavras_uteis[:n_palavras])
-    else:
-        nome_curto = " ".join(palavras_uteis[:2])
 
-    return _titulo_nome(nome_curto)
+    return _titulo_nome(_montar_nome(palavras_uteis))
 
 
 def analisar_oportunidades(df_calc, mapa_nomes):
@@ -497,14 +533,14 @@ def analisar_oportunidades(df_calc, mapa_nomes):
             except Exception:
                 ranking_liq = 1
 
-            # Tratamento de Nome
-            nome_completo = mapa_nomes.get(ticker, ticker)
-            nome_curto = _gerar_nome_curto(ticker, nome_completo)
-
             # Classe do ativo (Ação/BDR/FII/ETF) — sem metadados do TradingView
             # neste caminho, a classificação recai sobre o sufixo do ticker.
             from modules.ativos import classificar_ativo
             classe = classificar_ativo(ticker)
+
+            # Tratamento de Nome
+            nome_completo = mapa_nomes.get(ticker, ticker)
+            nome_curto = _gerar_nome_curto(ticker, nome_completo, classe)
 
             # Volume financeiro (R$/dia) — coerente com o caminho TradingView
             _vol_base = vol_medio if (pd.notna(vol_medio) and vol_medio > 0) else (volume or 0)
@@ -651,7 +687,7 @@ def _processar_row_tv(row, mapa_nomes):
     nome_completo = ((mapa_nomes or {}).get(ticker)
                      or str(row.get('description') or '').strip()
                      or ticker)
-    nome_curto = _gerar_nome_curto(ticker, nome_completo)
+    nome_curto = _gerar_nome_curto(ticker, nome_completo, classe)
 
     return {
         'Ticker': ticker,
@@ -748,15 +784,21 @@ def buscar_oportunidades_mercado(classes=None, mapa_nomes=None):
     tipos = tv_types_para_classes(classes) or {'stock', 'dr', 'fund'}
 
     try:
-        # IMPORTANTE: usamos ``where2`` (não ``where``) para SUBSTITUIR o filtro
-        # padrão do Query(), que só admite ações common/preferred + DR + fundos
-        # SEM 'etf'/'mutual'/'closedend' — ou seja, o padrão exclui ETFs e Units.
-        # Com ``where2`` filtramos apenas por tipo e deixamos ETFs, FIIs e Units
-        # passarem; a separação fina (ETF × FII) é feita na classificação abaixo.
+        # O Query() traz DOIS filtros padrão que atrapalham a varredura ampla:
+        #   • ``filter``  = is_primary == True  → exclui BDRs (cuja listagem
+        #     primária é a ação-mãe no exterior, não o BDR na B3);
+        #   • ``filter2`` = ações common/preferred + DR + fundos SEM
+        #     'etf'/'mutual'/'closedend' → exclui ETFs e Units.
+        # Sobrescrevemos AMBOS com um filtro só por tipo (``where`` limpa o
+        # is_primary; ``where2`` substitui o filtro restritivo), deixando ações,
+        # BDRs, FIIs, ETFs e Units passarem. A separação fina (ETF × FII) e o
+        # descarte de não-alvos ficam na classificação abaixo.
+        tipos_ord = sorted(tipos)
         _, df = (
             Query()
             .select(*_TV_CAMPOS)
-            .where2(And(col('type').isin(sorted(tipos))))
+            .where(col('type').isin(tipos_ord))
+            .where2(And(col('type').isin(tipos_ord)))
             .set_markets('brazil')
             .limit(10000)
             .get_scanner_data()

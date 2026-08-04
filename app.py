@@ -246,8 +246,8 @@ classes_selecionadas = st.multiselect(
     "Selecione as classes de ativos para varrer",
     options=list(CLASSES),
     default=list(CLASSES),
-    help="Ações (ON/PN/Units), BDRs, FIIs e ETFs nacionais. Marque todas para "
-         "varrer o mercado à vista inteiro; ou restrinja a uma classe específica.",
+    help="Ações (ON/PN/Units), BDRs e ETFs nacionais. Marque todas para "
+         "varrer o mercado à vista; ou restrinja a uma classe específica.",
     label_visibility="collapsed",
 )
 
@@ -313,7 +313,7 @@ if 'oportunidades' in st.session_state:
         st.markdown("""
 Os filtros ajudam a focar em **correções dentro de tendências de alta** (o objetivo do app), removendo quedas em tendência de baixa.
 
-- **Classe do ativo:** restringe a tabela a Ações, BDRs, FIIs e/ou ETFs. Vazio = todas as classes que foram varridas.
+- **Classe do ativo:** restringe a tabela a Ações, BDRs e/ou ETFs. Vazio = todas as classes que foram varridas.
 - **Acima da EMA20 / EMA50 / EMA200:** mostra só ativos cujo preço está **acima** da média escolhida. A EMA200 filtra a tendência de **longo prazo** (a mais importante); EMA20/50, curto/médio prazo. Pode combinar mais de uma.
 - **Liquidez mínima:** oculta ativos abaixo do ranking de liquidez escolhido (0 = sem filtro; 10 = só os mais líquidos). Útil para evitar papéis com pouco volume e gaps.
 
@@ -329,7 +329,7 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
         "🏷️ Classe do ativo",
         options=classes_disponiveis,
         default=[],
-        help="Restringe a tabela às classes escolhidas (Ação/BDR/FII/ETF). "
+        help="Restringe a tabela às classes escolhidas (Ação/BDR/ETF). "
              "Vazio = mostra todas as classes varridas.",
     )
 
@@ -500,7 +500,7 @@ Os filtros ajudam a focar em **correções dentro de tendências de alta** (o ob
             st.markdown("""
 Lista os ativos da B3 que **caíram no dia** e podem ser oportunidades de compra (correção). Dados ao vivo do TradingView, ordenados da maior para a menor queda.
 
-- **Classe:** tipo do ativo — Ação, BDR, FII ou ETF.
+- **Classe:** tipo do ativo — Ação, BDR ou ETF.
 - **Empresa / Liq. (💧):** nome do ativo e **ranking de liquidez 0–10** (pelo volume financeiro médio/dia). Quanto maior, menor o risco de spread/gap e mais fácil entrar e sair.
 - **Preço:** cotação atual do ativo na B3 (R\$).
 - **Queda_Dia:** variação % no dia (a tabela só mostra quedas).
@@ -531,7 +531,7 @@ Lista os ativos da B3 que **caíram no dia** e podem ser oportunidades de compra
             column_order=("Ticker", "Classe", "Empresa", "Liquidez", "Preco", "Queda_Dia", "IS", "Volume", "Gap", "Potencial", "Score", "Sinais"),
             column_config={
                 "Classe": st.column_config.TextColumn("Classe", width="small",
-                    help="Tipo do ativo: Ação, BDR, FII ou ETF"),
+                    help="Tipo do ativo: Ação, BDR ou ETF"),
                 "Empresa": st.column_config.TextColumn("Empresa", width="medium"),
                 "Liquidez": st.column_config.NumberColumn("💧 Liq.", width="small",
                     help="Ranking de Liquidez 0-10 (🔴 baixa → 🟢 alta)"),
